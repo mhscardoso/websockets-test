@@ -87,6 +87,20 @@ function insertArea(id, context) {
     div.append(h3);
     div.append(textArea);
 
+    div.onfocus(function(event) {
+        let d = pageSections.find((section) => section['id_time'] === this.id);
+        if (d['client_lock'] !== null) return;
+
+        if (div.id !== focusedDiv) {
+            websocket.send(JSON.stringify({
+                'STATUS': 'LOCK_SESSION',
+                'ClientID': CLIENT_ID,
+                'OldFocus': focusedDiv,
+                'NewFocus': div.id,
+            }));
+        }
+    });
+
     context.append(div);
 }
 
