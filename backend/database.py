@@ -70,7 +70,28 @@ async def lock_session(db: session, client_id: str, section_id: str, old_section
 
 async def unlock_session(db: session, client_id: str):
 	stmt = text("UPDATE secs SET client_lock = NULL WHERE client_lock = :client_id RETURNING id_time;")
-	section_id = db.execute(stmt, {'client_id': client_id})
+	section_id = db.execute(stmt, {'client_id': client_id}).first()
+    
+	if section_id != None:
+		section_id = section_id[0]
+
 	db.commit()
     
 	return section_id
+
+
+
+async def write(db: session, client_id: str, session_id: str, content: str):
+    session_corr_locked = text("SELECT id_time, client_lock FROM secs WHERE id_time = :session_id;")
+    session = db.execute(session_corr_locked, {'session_id': session_id}).first()
+
+    session_client_lock = session[1]
+
+    if session_client_lock != client_id:
+        return
+    
+    upd = text("UPDATE secs SET content = :content WHERE id_time = :session_id;")
+    db.execute(upd, {'content': content, 'session_id': session_id})
+
+    db.commit()
+    

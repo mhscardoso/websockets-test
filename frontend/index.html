@@ -4,6 +4,25 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Document</title>
+    <style>
+        textarea {
+            width: 90%;
+            height: 150px;
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            font-size: 16px;
+            resize: vertical;
+        }
+
+        .bloqueado {
+            background-color: #f0f0f0;  /* Cor de fundo mais clara */
+            border: 2px solid #ccc;     /* Borda mais suave */
+            color: #888;                /* Texto com cor mais suave */
+            pointer-events: none;         /* Impede interação com o campo */
+            opacity: 0.6;                 /* Deixa o campo um pouco mais transparente */
+        }
+    </style>
 </head>
 <body>
     <script type="text/javascript" src="./index.js"></script>
