@@ -1,18 +1,22 @@
-document.addEventListener('DOMContentLoaded', function() {
-    content = document.getElementById('content');
-});
+let content;
+let t;
 
+document.addEventListener('DOMContentLoaded', function(event) {
+    content = document.getElementById('content');
+    t = document.getElementById('t');
+    t.textContent = `Client: ${CLIENT_ID}`;
+})
 
 let pageSections = [];
 let focusedDiv   = null;
-const URL        = `http://localhost:8000/`;
-const CLIENT_ID  = Date.now();
-const WS_URL     = `ws://localhost:8000/ws/${CLIENT_ID}/`;
-const websocket  = new WebSocket(WS_URL);
+let URL_BASE     = `http://localhost:8000/`;
+let CLIENT_ID    = `${Date.now()}`;
+let WS_URL       = `ws://localhost:8000/ws/${CLIENT_ID}/`;
+let websocket    = new WebSocket(WS_URL);
 
 
 async function test() {
-    const response = await fetch(URL);
+    const response = await fetch(URL_BASE);
     const json = await response.json();
 
     console.log(json);
@@ -20,7 +24,7 @@ async function test() {
 
 
 async function getSavedSections() {
-    const response = await fetch(`${URL}sections/`);
+    const response = await fetch(`${URL_BASE}sections/`);
     const json = await response.json();
 
     return json;
@@ -47,8 +51,8 @@ function createTextArea() {
     div.append(h3);
     div.append(textArea);
 
-    div.onfocus(function(event) {
-        let d = pageSections.find((section) => section['id_time'] === this.id);
+    textArea.onfocus = function(event) {
+        let d = pageSections.find((section) => section['id_time'] === div.id);
         if (d['client_lock'] !== null) return;
 
         if (div.id !== focusedDiv) {
@@ -59,7 +63,7 @@ function createTextArea() {
                 'NewFocus': div.id,
             }));
         }
-    });
+    };
 
     return div;
 }
@@ -87,8 +91,8 @@ function insertArea(id, context) {
     div.append(h3);
     div.append(textArea);
 
-    div.onfocus(function(event) {
-        let d = pageSections.find((section) => section['id_time'] === this.id);
+    textArea.onfocus = function(event) {
+        let d = pageSections.find((section) => section['id_time'] === div.id);
         if (d['client_lock'] !== null) return;
 
         if (div.id !== focusedDiv) {
@@ -99,9 +103,9 @@ function insertArea(id, context) {
                 'NewFocus': div.id,
             }));
         }
-    });
+    };
 
-    context.append(div);
+    content.append(div);
 }
 
 
@@ -109,28 +113,58 @@ async function createSession() {
     const newDiv = createTextArea();
     content.append(newDiv);
 
-    websocket.send()
+    websocket.send(JSON.stringify({
+        'STATUS': 'ADD_SESSION',
+        'ClientID': CLIENT_ID,
+        'SectionID': newDiv.id,
+    }));
 }
 
 
 websocket.addEventListener('message', function(event) {
-    const data = event.data;
+    const data = JSON.parse(event.data);
 
-    if (data['STATUS'] === 'SECTION_ADDED') {
-        const sectionID = data['SectionID'];
+    if (data.STATUS == 'SESSION_ADDED') {
+        const sectionID = data.SectionID;
         insertArea(sectionID, '');
+        pageSections.push({
+            "id_time": sectionID,
+            "client_lock": data.ClientID,
+            "content": null,
+        });
+    }
+
+    if (data.STATUS === 'SESSION_LOCKED') {
+        console.log(pageSections);
+        let dIndex = pageSections.findIndex((section) => section['id_time'] === data.SectionID);
+        pageSections[dIndex]['client_lock'] = data['ClientID'];
+
+        let oIndex = pageSections.findIndex((section) => section['id_time'] === data.Avaiable);
+        pageSections[oIndex]['client_lock'] = null;
+    }
+
+    if (data.STATUS === 'AVAIABLE') {
+        let oIndex = pageSections.findIndex((section) => section['id_time'] === data.Avaiable);
+        pageSections[oIndex]['client_lock'] = null;
     }
 });
 
 
+websocket.addEventListener('close', function(event) {
+    websocket.send(JSON.stringify({
+        'STATUS': 'CLEAR',
+        'SectionID': focusedDiv,
+    }));
+});
+
 
 async function main() {
     let initialContext = await getSavedSections();
+    console.log(initialContext);
 
     await initialContext.forEach(session => {
         insertArea(session.id_time, session.content);
         pageSections.push({
-            "id": session.id,
             "id_time": session.id_time,
             "client_lock": session.client_lock,
             "content": session.content,

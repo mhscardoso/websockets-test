@@ -1,21 +1,19 @@
-from fastapi import FastAPI, Depends, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from typing import Annotated
-from sqlalchemy.orm import Session
-from sqlalchemy import text, insert
 from pydantic import BaseModel
-from database import SessionLocal
+import json
+from database import (
+    session,
+    recover_sessions,
+
+    insert_client,
+    remove_client,
+
+    insert_section,
+    lock_session,
+    unlock_session,
+)
 from manager import manager
-
-# Dependency
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
-
-session = Annotated[Session, Depends(get_db)]
 
 app = FastAPI()
 
@@ -29,35 +27,9 @@ app.add_middleware(
 
 
 class Sections(BaseModel):
-    id: int
     id_time: str
-    client_lock: str
-    content: str
-
-
-async def insert_client(db: session, id_time):
-    stmt = text("INSERT INTO clients(id_time) VALUES (:id_time);")
-    db.execute(stmt, {'id_time': id_time})
-    db.commit()
-
-
-async def remove_client(db: session, id_time: int):
-    stmt = text("DELETE FROM clients WHERE id_time = to_char(:id_time, '99999999999999');")
-    db.execute(stmt, {'id_time': id_time})
-    db.commit()
-
-
-async def insert_section(db: session, client_id: int, section_id: str):
-    stmt1 = text("UPDATE secs SET client_lock = NULL WHERE client_lock = :client_id;")
-    db.execute(stmt1, {'client_id': client_id})
-
-    stmt2 = text("INSERT INTO secs(id_time, client_lock) VALUES (:id_time, :client_lock);")
-    db.execute(stmt2, {'id_time': section_id, 'client_lock': client_id})
-
-
-async def lock_session(db: session, client_id: int, section_id: str, old_section_id: str):
-    pass
-
+    client_lock: str | None
+    content: str | None
 
 
 @app.get('/')
@@ -66,9 +38,8 @@ def index():
 
 
 @app.get('/sections/', response_model=list[Sections])
-def get_sections(db: session):
-    stmt = text('SELECT * FROM secs;')
-    result = db.execute(stmt).fetchall()
+async def get_sections(db: session):
+    result = await recover_sessions(db)
 
     return result
 
@@ -79,6 +50,8 @@ def get_sections(db: session):
 # LOCK_SESSION:
 #   
 #
+# SESSION_LOCKED
+#
 # SESSION_ADDED:
 #   ClientID, SessionID
 #
@@ -86,25 +59,30 @@ def get_sections(db: session):
 
 
 @app.websocket('/ws/{client_id}/')
-async def ws_route(db: session, websocket: WebSocket, client_id: int):
+async def ws_route(db: session, websocket: WebSocket, client_id: str):
     await manager.connect(websocket)
     await insert_client(db, client_id)
 
-    await manager.broadcast({'ClientID': client_id, 'STATUS': 'IN'})
+    await manager.broadcast("""{\"ClientID\": \"%s\", \"STATUS\": \"IN\"}""" % client_id)
 
     try:
         while True:
             data = await websocket.receive_json()
 
             if data['STATUS'] == 'ADD_SESSION':
-                insert_section(db, data['ClientID'], data['SectionID'])
-                await manager.broadcast_others({'ClientID': client_id, 'STATUS': 'SESSION_ADDED', 'SectionID': data['SectionID']})
+                await insert_section(db, client_id, data['SectionID'])
+                await manager.broadcast_others(websocket, """{\"ClientID\": \"%s\", \"STATUS\": \"SESSION_ADDED\", \"SectionID\": \"%s\"}""" % (client_id, data['SectionID']))
             
             if data['STATUS'] == 'LOCK_SESSION':
-                pass
+                await lock_session(db, client_id, data['NewFocus'], data['OldFocus'])
+                await manager.broadcast_others(websocket, """{\"ClientID\": \"%s\", \"STATUS\": \"SESSION_LOCKED\", \"SectionID\": \"%s\", \"Avaiable\": \"%s\"}""" % (client_id, data['NewFocus'], data['NewFocus']))
 
             if data['STATUS'] == 'SESSION_ADDED':
                 pass
+
+            if data['STATUS'] == 'CLEAR':
+                await unlock_session(db, data['SectionID'])
+                await manager.broadcast_others(websocket, """{\"STATUS\": \"AVAIABLE\", \"Avaiable\": \"%s\"}""" % data['OldFocus'])
 
             if data['STATUS'] == 'WRITING':
                 pass
@@ -113,5 +91,9 @@ async def ws_route(db: session, websocket: WebSocket, client_id: int):
     except WebSocketDisconnect:
         manager.disconnect(websocket)
         await remove_client(db, client_id)
-        await manager.broadcast({'ClientID': client_id, 'STATUS': 'OUT'})
+        section_id = await unlock_session(db, client_id)
+
+        await manager.broadcast_others(websocket, """{\"STATUS\": \"AVAIABLE\", \"Avaiable\": \"%s\",}""" % section_id)
+
+        await manager.broadcast("""{\"ClientID\": \"%s\", \"STATUS\": \"OUT\"}""" % client_id)
 
